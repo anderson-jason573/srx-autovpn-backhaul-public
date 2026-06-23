@@ -77,14 +77,16 @@ filtered, and logged at a single point (UTM/IDP on the hub).
 ## Prerequisites
 
 - Four SRX (vSRX or hardware) running Junos with AutoVPN / traffic-selector
-  support. This lab used vSRX **23.2R2.21**, whose golden image has `junos-ike`
-  built in. On images without it, install the `junos-ike` package and reboot
-  before committing AutoVPN config.
+  support. This lab used vSRX **23.2R2.21**.
+- The `junos-ike` package is required for AutoVPN. Install it and reboot:
+
+  ```
+  request system software add optional://junos-ike.tgz
+  request system reboot
+  ```
 - One Cisco IOS-XE router (this lab used a CSR1000v) for the WAN fabric.
 - Management reachability to every device (this lab uses out-of-band `fxp0` on
   `172.27.1.0/24`).
-- On vSRX VMs: NIC driver `e1000` (for `ge-0/0/x` naming) and promiscuous mode on
-  the WAN bridge so IKE/ESP isn't dropped.
 
 ---
 
@@ -92,10 +94,20 @@ filtered, and logged at a single point (UTM/IDP on the hub).
 
 **1. Create your PSK file** (never committed — see `.gitignore`):
 
+`secrets.env` is just a plain-text file holding one variable, `AUTOVPN_PSK`, in
+`NAME=value` form (no spaces around the `=`). It keeps the real key out of git so
+the configs in this repo can ship with a placeholder instead. Copy the template
+and put your key in it:
+
 ```bash
 cp secrets.env.example secrets.env
-# edit secrets.env and set a strong AUTOVPN_PSK (identical on every device)
+# edit secrets.env so the line reads, for example:
+#   AUTOVPN_PSK=Y0ur-Str0ng-PSK!-here
 ```
+
+Use a strong key (20+ chars, mixed case, numbers, symbols), and use the **same**
+key on every device — the hub and all spokes must match. Because `.gitignore`
+excludes `secrets.env`, this file stays local and is never pushed.
 
 **2. Deploy in order** — WAN fabric first, then hub, then spokes:
 
@@ -110,12 +122,22 @@ cp secrets.env.example secrets.env
 **3. Substitute the PSK** into each SRX config before applying (the configs ship
 with a `$AUTOVPN_PSK` placeholder, never the real key):
 
+First, `source secrets.env` — this reads the file and loads `AUTOVPN_PSK` into your
+current shell session as an environment variable, so the next command can reference
+it as `$AUTOVPN_PSK`. (It only lasts for that terminal session; re-run it if you
+open a new shell.) Then `sed` does a find-and-replace, swapping every
+`$AUTOVPN_PSK` placeholder in the config for your real key and writing the result
+to a temporary deploy file:
+
 ```bash
 source secrets.env
 sed "s/\$AUTOVPN_PSK/$AUTOVPN_PSK/g" 11-srx01-hub-backhaul-config.md > /tmp/srx01-deploy.md
 # apply /tmp/srx01-deploy.md to the device, then:
 rm /tmp/srx01-deploy.md
 ```
+
+Repeat the `sed` line for each SRX config (`12-`, `13-`, `14-`). Delete each
+`/tmp/*-deploy.md` file once applied — it contains the real key in cleartext.
 
 Each SRX config is a complete flat `set`-format block ending in `commit check` /
 `commit`. CSR1 is standard IOS config applied under `conf t` and saved with `write
@@ -141,11 +163,16 @@ On the hub, `show security nat source rule all` shows the internet flows
 translated, while spoke-to-spoke flows match the `VPN → VPN` policy with no
 translation. See the design doc §8 for the full validation procedure.
 
-> **Heads-up — the `0.0.0.0/0` routing caveat.** Many vSRX images ship a management
-> default route (`0.0.0.0/0 → … via fxp0`). A second `0.0.0.0/0` into the tunnel/WAN
-> will ECMP with it and break NAT. The configs include both the production
-> `0.0.0.0/0` form and a more-specific `/32` lab alternative (commented). See design
-> doc §5.
+> **Heads-up — the `0.0.0.0/0` routing caveat.** vSRX does not ship with a default
+> route via `fxp0`; this lab adds one so the devices have out-of-band management
+> access. The side effect is that a second `0.0.0.0/0` (into the tunnel on a spoke,
+> or toward the WAN on the hub) ECMPs with that management default — traffic leaks
+> out `fxp0` and NAT never applies. In a live production environment you'd put
+> `fxp0` in its own management routing-instance, which isolates the management
+> default and lets a `0.0.0.0/0` be used normally for data traffic. In this lab we
+> instead use a specific route to `10.100.100.1/32` — a loopback on CSR1 that
+> simulates the internet — so it stays more-specific than the management default and
+> NAT works. See design doc §5.
 
 ---
 
