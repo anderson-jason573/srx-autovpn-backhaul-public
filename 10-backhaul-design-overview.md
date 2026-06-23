@@ -16,7 +16,7 @@ internet.
                          │  CSR1 (Cisco IOS-XE)     │
                          │  WAN transit router      │
                          │  loopback 10.100.100.1   │  ← "the internet"
-                         └────────────┬────────────-┘
+                         └────────────┬────────────┘
                   10.0.0.0/30  10.0.1.0/30  10.0.2.0/30  10.0.3.0/30
                         │          │           │           │
                   ┌─────┴───┐  ┌───┴────┐  ┌───┴────┐  ┌───┴────┐
@@ -68,16 +68,130 @@ without per-spoke configuration on the hub. The pieces:
   automatically installs a route to that spoke's LAN `/24` pointing at `st0.0`
   (shown as protocol `ARI-TS`). The hub needs no static routes to spoke LANs.
 - **Traffic selectors** define which source/destination prefixes each end will
-  carry in the tunnel. They are the lever this scenario pulls — see §4.
+  carry in the tunnel. They are the lever this scenario pulls — see §5.
 
 > **Why a traffic-selector AutoVPN and not a route-based dynamic-routing design?**
 > Traffic selectors keep the spoke config self-describing (each spoke declares its
 > own LAN) and let ARI handle hub-side routing automatically, which is what makes
 > "drop in another spoke with no hub change" work.
 
+> **Authentication — lab PSK vs. production PKI.** This lab authenticates IKE with a
+> single shared **pre-shared key** across the hub and all spokes (kept out of git as
+> `$AUTOVPN_PSK`; see §8). That keeps the focus on the AutoVPN and routing mechanics,
+> but it is not production practice. In production, prefer **certificate-based (PKI)
+> authentication** with a per-device identity, or at minimum strong, unique PSKs held
+> in a secrets manager with rotation and the length/complexity policy enforced.
+
 ---
 
-## 3. Split Tunnel vs. Full-Tunnel Backhaul
+## 3. AutoVPN Design Rationale
+
+The full-tunnel mechanics are covered in the sections around this one; this section
+steps back to the *why* — why AutoVPN with traffic selectors at all, and how it
+scales. It is design rationale that applies to any AutoVPN deployment (split tunnel or
+full-tunnel backhaul), included here so the lab is self-explaining.
+
+### 3.1 Why AutoVPN?
+
+Juniper AutoVPN allows the hub to accept connections from an unlimited number of spoke
+devices using a **single IKE gateway configuration**. When a new spoke is deployed, it
+connects to the hub using the pre-configured shared PSK — the hub configuration does
+not change.
+
+### 3.2 Why Traffic Selectors Instead of OSPF/iBGP?
+
+Traffic selectors with point-to-point st0 mode were chosen over dynamic routing
+protocols (OSPF or iBGP with point-to-multipoint st0) for the following reasons:
+
+| | OSPF/iBGP + P2MP | Traffic Selectors + ARI |
+|---|---|---|
+| Hub config changes for new spoke | None | None |
+| Max spokes (conservative, single hub) | ~30–40 | ~15,000 (SRX5800) |
+| Dynamic routing on overlay | Yes | No — not needed for hub-and-spoke |
+| Spoke routing complexity | Auto via OSPF | One static default route |
+| Third-party spokes supported | No | Yes |
+| ARI auto-installs hub routes | N/A | Yes |
+
+For a pure hub-and-spoke design, dynamic routing on the overlay provides no benefit —
+spokes only ever need to reach the hub, and the hub only needs to reach each spoke's
+LAN. Traffic selectors with ARI handle both requirements without any routing protocol
+overhead, and scale to enterprise deployments with thousands of spokes.
+
+### 3.3 Point-to-Point st0 Mode
+
+The `st0.0` interface on all devices is in the default **point-to-point** mode (no
+`multipoint` keyword). This is required when using traffic selectors —
+point-to-multipoint mode does not support traffic selectors.
+
+st0 interfaces are **unnumbered** in this design. IP addressing on the tunnel
+interface is not required since routing is handled by static routes and ARI rather
+than a routing protocol.
+
+### 3.4 Scaling Considerations
+
+| Platform | Max IPsec Tunnels (approx.) |
+|---|---|
+| SRX300/320 | ~512 |
+| SRX340/345 | ~2,048 |
+| SRX1500 | ~2,000 |
+| SRX4100/4200 | ~10,000 |
+| SRX4600/5800 | ~15,000 (with traffic selectors) |
+
+For deployments approaching platform limits, dual-hub with redundancy is recommended
+to eliminate the single point of failure and distribute spoke load.
+
+### 3.5 Traffic Selector Scope: Specific Supernet vs. `0.0.0.0/0` Wildcard
+
+> **Scope note.** This section is about the **hub's `remote-ip`** selector — which stays
+> `192.168.0.0/16` even in full-tunnel backhaul (see the §5 table). That is a *different*
+> axis from the `0.0.0.0/0` the backhaul design puts on the *spoke* `remote-ip` and the
+> *hub* `local-ip` to pull internet-bound traffic up the tunnel. Don't conflate the two
+> `0.0.0.0/0` uses.
+
+The hub's traffic selector `remote-ip` controls which spoke prefixes the hub will accept
+and — because ARI derives routes directly from the negotiated selector — which routes end
+up in the hub's table. There are two valid strategies. **This lab uses the specific
+supernet (`192.168.0.0/16`)**; the wildcard is documented here because it is the correct
+choice for a different (and common) real-world situation.
+
+In both cases the mechanism is the same: IKEv2 narrows the hub `remote-ip` against each
+spoke's proposed `local-ip` to the **intersection**, and ARI installs that intersection as
+a route via `st0.0`. With a spoke advertising `192.168.2.0/24`, both a hub `remote-ip` of
+`192.168.0.0/16` and `0.0.0.0/0` negotiate down to the same clean `192.168.2.0/24` route.
+The difference is entirely in what the hub is willing to accept *before* narrowing.
+
+| | Specific supernet (`192.168.0.0/16`) | Wildcard (`0.0.0.0/0`) |
+|---|---|---|
+| **Use when** | Spoke LANs fall inside a summarizable block (well-designed addressing) | Spoke LANs are discontiguous / not summarizable (poorly-designed or acquired address space) |
+| **Hub-side guardrail** | Yes — rejects at IKE negotiation any spoke advertising a prefix outside the summary | None — hub trusts every spoke to advertise honestly |
+| **Zero-touch hub** | Mostly — but a new spoke whose LAN falls outside the summary forces you to widen the supernet (a hub change) | Fully — hub never needs editing regardless of what subnets spokes use |
+| **Blast radius if a spoke is rogue/misconfigured** | Contained — a spoke cannot inject the hub LAN, another site's prefix, or a default route | Large — a spoke could advertise the hub LAN, another site's subnet, or `0.0.0.0/0`, and ARI would install it (route hijack); push the guardrail to security policies / per-spoke filtering instead |
+| **Routing-table predictability** | High | Depends on spoke honesty |
+
+**Why we default to the supernet here:** the lab's addressing is clean
+(`192.168.{1,2,3,4}.0/24`), so `192.168.0.0/16` summarizes every spoke and keeps the
+hub-side guardrail. It is the safer default whenever the address plan permits it.
+
+**When the wildcard is the right call:** a customer with no summarizable scheme. Requiring
+a clean supernet would break AutoVPN's zero-touch-hub promise for them — you would have to
+enumerate every discontiguous prefix (or keep widening the supernet) as sites are added.
+The wildcard lets the hub accept any spoke prefix without ever knowing it in advance, and
+ARI still installs clean per-spoke routes via narrowing.
+
+**Two caveats that apply regardless of which strategy is chosen:**
+
+- **Spokes must propose their *specific* subnets, not `0.0.0.0/0`.** If a spoke also
+  advertises a wildcard, the negotiated selector stays `0.0.0.0/0` and ARI has no specific
+  prefix to install — the original failure mode. Keep the wildcard on the *hub* side only.
+- **Overlapping spoke subnets are not solved by either selector.** A "poorly-designed
+  scheme" frequently means collisions (e.g. multiple sites all using `192.168.1.0/24`).
+  ARI would receive the same prefix via `st0.0` from two spokes — an ambiguous route.
+  The only real fix is **NAT** (typically static/twice-NAT at each colliding spoke so it
+  presents a unique prefix to the hub). This is an addressing problem, not a VPN problem.
+
+---
+
+## 4. Split Tunnel vs. Full-Tunnel Backhaul
 
 A conventional AutoVPN spoke runs a **split tunnel**: only hub-LAN-bound traffic
 (`remote 192.168.1.0/24`) enters the IPsec tunnel; internet traffic breaks out
@@ -114,7 +228,7 @@ AutoVPN dynamic-gateway mechanics — is standard AutoVPN.
 
 ---
 
-## 4. Traffic Selectors (the core of it)
+## 5. Traffic Selectors (the core of it)
 
 Full-tunnel is fundamentally a traffic-selector change. The spoke must *request*
 the whole internet through the tunnel, and the hub must *accept* any destination.
@@ -142,7 +256,7 @@ B's subnet, and the outbound SA to spoke B already accepts spoke A as the source
 
 ---
 
-## 5. Routing Changes
+## 6. Routing Changes
 
 ### Spoke
 
@@ -183,13 +297,15 @@ stay more-specific than the new default. Keep them.
 > - **Lab shortcut (what was actually deployed and validated here):** instead of a
 >   full default, route the *simulated-internet destination* specifically —
 >   `10.100.100.1/32 → st0.0` on the spoke and `10.100.100.1/32 → 10.0.0.1` on the
->   hub. Being more-specific than the management default, this exercises the full
->   backhaul + NAT data path without disturbing management. The config files carry
->   the production `0.0.0.0/0` form plus this `/32` alternative as a commented note.
+>   hub. Each spoke also carries `192.168.0.0/16 → st0.0` so hub-LAN and
+>   spoke-to-spoke traffic backhauls the same way (see §9). Being more-specific than
+>   the management default, these exercise the full backhaul + NAT data path without
+>   disturbing management. The config files carry the production `0.0.0.0/0` form
+>   plus these specific-route alternatives as a commented note.
 
 ---
 
-## 6. Hub NAT and Security Policy Changes
+## 7. Hub NAT and Security Policy Changes
 
 ### Source NAT (internet egress only)
 
@@ -237,7 +353,7 @@ leave.
 
 ---
 
-## 7. Deployment Order
+## 8. Deployment Order
 
 Deploy CSR1 first (the WAN fabric must be up before any SRX can reach its peers),
 then the hub, then the spokes in any order:
@@ -256,7 +372,7 @@ and substituted at deploy time from a local `secrets.env` (see the README and
 
 ---
 
-## 8. Validation
+## 9. Validation
 
 This scenario has been validated end-to-end on all four SRX (hub + three spokes) on
 Junos 23.2R2.21: the hub shows three IKE SAs UP, three IPsec SAs, and three clean
@@ -264,7 +380,7 @@ ARI routes (`192.168.2/3/4.0/24` via `st0.0`), with a stable data plane (no core
 dumps). Both data paths pass 5/5 with 0% loss.
 
 > Validated using the `/32` lab routing form rather than a real default route (see
-> the management-default caveat in §5): on each spoke, `10.100.100.1/32 → st0.0`
+> the management-default caveat in §6): on each spoke, `10.100.100.1/32 → st0.0`
 > (sim-internet) and `192.168.0.0/16 → st0.0` (hub LAN + all other spoke LANs, for
 > spoke-to-spoke). These stay more-specific than the image's management default and
 > exercise the full backhaul + NAT + hairpin data path without disturbing
@@ -301,9 +417,9 @@ leaving on `st0.0` (zone `VPN → VPN`), **with no NAT translation** applied.
 
 ---
 
-## 9. Caveats and Tradeoffs
+## 10. Caveats and Tradeoffs
 
-1. **Anti-recursion route (see §5)** — the single most common way full tunnel
+1. **Anti-recursion route (see §6)** — the single most common way full tunnel
    breaks. The spoke must keep a more-specific route to the hub's WAN IP via the
    physical underlay.
 2. **No local breakout — everything hairpins through the hub.** All spoke internet
@@ -323,7 +439,7 @@ leaving on `st0.0` (zone `VPN → VPN`), **with no NAT translation** applied.
 
 ---
 
-## 10. Files in This Repository
+## 11. Files in This Repository
 
 | File | Device | Contents |
 |------|--------|----------|
@@ -334,3 +450,25 @@ leaving on `st0.0` (zone `VPN → VPN`), **with no NAT translation** applied.
 | `14-srx04-spoke-backhaul-config.md` | srx04 | Spoke — full-tunnel TS, default route via `st0.0` |
 | `05-csr1-config.md` | CSR1 | WAN transit router / simulated internet |
 | `secrets.env.example` | — | Template for the local `secrets.env` holding `AUTOVPN_PSK` |
+
+---
+
+## 12. References
+
+- Juniper Networks — *IPsec VPN User Guide (Junos OS)*
+  https://www.juniper.net/documentation/us/en/software/junos/vpn-ipsec/index.html
+
+- Juniper Networks — *AutoVPN on Hub-And-Spoke Devices*
+  https://www.juniper.net/documentation/us/en/software/junos/vpn-ipsec/topics/topic-map/security-autovpn-on-hub-and-spoke-devices.html
+
+- Juniper Networks — *Understanding Traffic Selectors in Route-Based VPNs*
+  https://www.juniper.net/documentation/us/en/software/junos/vpn-ipsec/topics/topic-map/security-traffic-selectors-in-route-based-vpns.html
+
+- Juniper Networks — *Example: Configuring AutoVPN with Pre-Shared Key*
+  https://www.juniper.net/documentation/us/en/software/junos/interfaces-next-gen-services/topics/example/configuring-auto-vpn-pre-shared-key.html
+
+- Juniper Networks — *IPsec VPN Configuration Overview*
+  https://www.juniper.net/documentation/us/en/software/junos/vpn-ipsec/topics/topic-map/security-ipsec-vpn-configuration-overview.html
+
+- Cisco — *IOS-XE Configuration Guide*
+  https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/sec_conn_vpnips/configuration/xe-16/sec-sec-for-vpns-w-ipsec-xe-16-book.html
