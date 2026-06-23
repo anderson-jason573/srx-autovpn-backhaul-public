@@ -85,7 +85,7 @@ Each SRX config block ends in `commit check` then `commit`.
   into `st0.0`, but the ESP packets carrying the tunnel are destined to the hub WAN
   IP (`10.0.0.2`). The host route `10.0.0.2/32 → <CSR /30 next-hop>` must stay
   more-specific than the default, or the tunnel recurses into itself and
-  black-holes. See design §5.
+  black-holes. See design §6.
 - **`0.0.0.0/0` vs. the management default.** Many vSRX images ship a management
   default `0.0.0.0/0 → 172.27.1.1 via fxp0` in `inet.0`. A second `0.0.0.0/0` (into
   the tunnel on a spoke, or toward CSR1 on the hub) **ECMPs** with it — traffic
