@@ -92,7 +92,7 @@ filtered, and logged at a single point (UTM/IDP on the hub).
 
 ## Quick start
 
-**1. Create your PSK file** (never committed — see `.gitignore`):
+**1. Create your PSK file**
 
 `secrets.env` is just a plain-text file holding one variable, `AUTOVPN_PSK`, in
 `NAME=value` form (no spaces around the `=`). It keeps the real key out of git so
@@ -125,9 +125,8 @@ with a `$AUTOVPN_PSK` placeholder, never the real key):
 First, `source secrets.env` — this reads the file and loads `AUTOVPN_PSK` into your
 current shell session as an environment variable, so the next command can reference
 it as `$AUTOVPN_PSK`. (It only lasts for that terminal session; re-run it if you
-open a new shell.) Then `sed` does a find-and-replace, swapping every
-`$AUTOVPN_PSK` placeholder in the config for your real key and writing the result
-to a temporary deploy file:
+open a new shell.) Then `sed` rewrites the config, swapping the placeholder for your
+real key and saving the result to a temporary deploy file:
 
 ```bash
 source secrets.env
@@ -136,8 +135,43 @@ sed "s/\$AUTOVPN_PSK/$AUTOVPN_PSK/g" 11-srx01-hub-backhaul-config.md > /tmp/srx0
 rm /tmp/srx01-deploy.md
 ```
 
-Repeat the `sed` line for each SRX config (`12-`, `13-`, `14-`). Delete each
-`/tmp/*-deploy.md` file once applied — it contains the real key in cleartext.
+**Reading that `sed` command:** the `s/old/new/g` syntax means *substitute* — find
+`old`, replace it with `new`, and the trailing `g` makes it *global* so every match
+on a line is replaced, not just the first. Here `old` is the literal placeholder
+text `$AUTOVPN_PSK` (the `\$` escapes the `$` so the shell leaves it alone and `sed`
+sees the literal characters), and `new` is `$AUTOVPN_PSK` *without* the backslash, so
+the shell expands it to the actual key you sourced in the previous step. `sed` prints
+the rewritten config to standard output, and the `>` redirects that output into the
+new file `/tmp/srx01-deploy.md` instead of your screen. The original repo file is
+never modified.
+
+**Applying the deploy file to the SRX:** the deploy file now holds the complete
+device config as Junos flat `set` commands. You can apply it two ways.
+
+*Option A — manually via the CLI.* Open the deploy file, copy the block of `set`
+lines, then on the device:
+
+```
+ssh admin@172.27.1.50        # the SRX's fxp0 management IP
+configure                    # enter configuration mode
+# paste the set commands here (or use: load set terminal, paste, then Ctrl-D)
+commit check                 # validate before committing
+commit                       # apply
+```
+
+`commit check` confirms the candidate config is valid without activating it; `commit`
+makes it live.
+
+*Option B — with Claude Code.* This lab is built to be driven from Claude Code using
+the [junos-mcp-server](https://github.com/Juniper/junos-mcp-server) MCP, which pushes
+config to each SRX over NETCONF — no manual paste. With the device listed in
+`devices.json` and NETCONF enabled on the SRX (`set system services netconf ssh`),
+ask Claude Code to load and commit the deploy file to the device; it handles the
+`commit check` / `commit` for you. See `CLAUDE.md` for the MCP setup.
+
+Either way, repeat for each SRX config (`12-`, `13-`, `14-`), using that device's
+management IP. Delete each `/tmp/*-deploy.md` file once applied — it contains the
+real key in cleartext.
 
 Each SRX config is a complete flat `set`-format block ending in `commit check` /
 `commit`. CSR1 is standard IOS config applied under `conf t` and saved with `write
