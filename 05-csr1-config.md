@@ -26,15 +26,12 @@ CSR1's responsibilities:
 - Terminate P2P /30 links to all four SRX `ge-0/0/0` interfaces
 - Forward IKE and ESP traffic between the SRXs via sw1 (all on the same WAN bridge)
 - Provide a simulated internet destination via `lo1` (10.100.100.1/32)
-- Have static routes to each SRX LAN subnet pointing to the respective SRX WAN IP
 
 > **Note:** Because all four SRX WAN interfaces connect through the same `sw1` virtual bridge in Proxmox, CSR1 can actually route between them at layer 3. However, IKE/ESP traffic between spokes will flow SRX→CSR1→SRX since they're all on the same WAN segment — this correctly mimics internet transit behavior.
 
 ---
 
 ## Configuration
-
-> **Before applying:** Ensure `secrets.env` has been created on the server with `AUTOVPN_PSK` set.
 
 ```ios
 ! ============================================================
@@ -93,19 +90,6 @@ interface GigabitEthernet5
 !
 
 ! ============================================================
-! Static Routes
-! ============================================================
-
-! Routes to SRX LAN subnets (for management reachability and testing)
-ip route 192.168.1.0 255.255.255.0 10.0.0.2
-ip route 192.168.2.0 255.255.255.0 10.0.1.2
-ip route 192.168.3.0 255.255.255.0 10.0.2.2
-ip route 192.168.4.0 255.255.255.0 10.0.3.2
-
-! Route to tunnel overlay subnet (optional — useful for diagnostics)
-ip route 10.100.200.0 255.255.255.0 10.0.0.2
-
-! ============================================================
 ! Optional: Disable CDP on WAN-facing interfaces
 ! ============================================================
 no cdp run
@@ -142,6 +126,6 @@ ssh -l admin 172.27.1.51     ! srx02 fxp0
 
 ## Notes
 
-- CSR1 **does not need any changes** when new SRX spokes are added to the AutoVPN. You only need to add a new GigabitEthernet interface for the new /30 WAN link and a corresponding static route to the new LAN subnet.
+- CSR1 **does not need any changes** when new SRX spokes are added to the AutoVPN. You only need to add a new GigabitEthernet interface for the new /30 WAN link.
 - The WAN /30 subnets (`10.0.0.0/30` through `10.0.3.0/30`) all connect through sw1 in Proxmox. CSR1 is the IP gateway on each /30, so all SRX WAN traffic transits through it — including IKE negotiation between spokes and the hub.
 - The simulated internet loopback (`10.100.100.1/32`) can be used in traceroute and ping tests from SRX LAN clients to validate that VPN traffic does NOT leave the overlay unencrypted.
