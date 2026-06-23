@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>SRX Homelab</title>
+  <title>SRX AutoVPN Lab</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -125,7 +125,6 @@
 <body>
 
 <nav>
-  <span class="nav-brand">SRX Homelab</span>
   <button class="nav-tab active" onclick="showPage('overview', this)">Lab Network Overview</button>
   <button class="nav-tab" onclick="showPage('backhaul', this)">Full-Tunnel Backhaul</button>
 </nav>
@@ -371,7 +370,7 @@
   </div>
 </div>
 
-<footer>SRX Homelab · Proxmox Homelab Automation Project</footer>
+<footer>SRX AutoVPN Lab</footer>
 <script>
   function showPage(id, tab) {
     document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
