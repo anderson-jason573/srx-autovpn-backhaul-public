@@ -117,7 +117,7 @@ set security ipsec vpn AUTOVPN-HUB ike ipsec-policy AUTOVPN-IPSEC-POL
 # Full-tunnel traffic selector: hub local-ip is 0.0.0.0/0 so it accepts ANY
 # destination from spokes (internet + other spoke LANs). remote-ip stays the spoke summary.
 # IKEv2 narrows per-spoke; ARI still installs each specific /24 via st0.0 (local 0.0.0.0/0
-# does NOT create a default route via st0.0). See 10-backhaul-design-overview.md §4.
+# does NOT create a default route via st0.0). See 10-backhaul-design-overview.md §5.
 set security ipsec vpn AUTOVPN-HUB traffic-selector TS-ALL local-ip 0.0.0.0/0
 set security ipsec vpn AUTOVPN-HUB traffic-selector TS-ALL remote-ip 192.168.0.0/16
 
@@ -207,7 +207,7 @@ set routing-options static route 10.0.3.0/30 next-hop 10.0.0.1
 # Move fxp0 to a management routing-instance in production, OR for lab validation use a
 # specific destination route instead, e.g.:
 #   set routing-options static route 10.100.100.1/32 next-hop 10.0.0.1   (sim-internet)
-# See 10-backhaul-design-overview.md §5. Validated with the /32 form.
+# See 10-backhaul-design-overview.md §6. Validated with the /32 form.
 set routing-options static route 0.0.0.0/0 next-hop 10.0.0.1
 
 # ============================================================
@@ -228,7 +228,7 @@ show security ipsec security-associations
 
 # ARI routes — still clean per-spoke /24s despite local 0.0.0.0/0
 show route 192.168.2.0/24
-show route table inet.0 protocol ipsec-remote-access
+show route 192.168.0.0/16                  # all ARI-installed spoke /24s via st0.0 (protocol ARI-TS)
 
 # Source NAT — translations for backhauled internet traffic
 show security nat source rule all

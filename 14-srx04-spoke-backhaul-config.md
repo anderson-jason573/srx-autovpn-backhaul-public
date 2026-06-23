@@ -183,7 +183,7 @@ set routing-options static route 10.0.3.0/30 next-hop 10.0.3.1
 # tunnel). Move fxp0 to a management routing-instance in production, OR for lab
 # validation use a specific destination route instead, e.g.:
 #   set routing-options static route 10.100.100.1/32 next-hop st0.0   (sim-internet)
-# See 10-backhaul-design-overview.md §5. Validated with the /32 form.
+# See 10-backhaul-design-overview.md §6. Validated with the /32 form.
 set routing-options static route 0.0.0.0/0 next-hop st0.0
 
 # ============================================================
