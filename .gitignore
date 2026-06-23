@@ -1,0 +1,8 @@
+# Secrets — never commit (contains AUTOVPN_PSK)
+secrets.env
+
+# Runtime job database (Proxmox MCP)
+proxmox-jobs.sqlite3
+
+# Rendered/deploy artifacts with substituted PSK
+/tmp/*-deploy.*
