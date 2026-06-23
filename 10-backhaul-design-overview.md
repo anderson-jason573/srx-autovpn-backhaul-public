@@ -75,6 +75,13 @@ without per-spoke configuration on the hub. The pieces:
 > own LAN) and let ARI handle hub-side routing automatically, which is what makes
 > "drop in another spoke with no hub change" work.
 
+> **Authentication — lab PSK vs. production PKI.** This lab authenticates IKE with a
+> single shared **pre-shared key** across the hub and all spokes (kept out of git as
+> `$AUTOVPN_PSK`; see §8). That keeps the focus on the AutoVPN and routing mechanics,
+> but it is not production practice. In production, prefer **certificate-based (PKI)
+> authentication** with a per-device identity, or at minimum strong, unique PSKs held
+> in a secrets manager with rotation and the length/complexity policy enforced.
+
 ---
 
 ## 3. AutoVPN Design Rationale
@@ -181,23 +188,6 @@ ARI still installs clean per-spoke routes via narrowing.
   ARI would receive the same prefix via `st0.0` from two spokes — an ambiguous route.
   The only real fix is **NAT** (typically static/twice-NAT at each colliding spoke so it
   presents a unique prefix to the hub). This is an addressing problem, not a VPN problem.
-
-#### Version-dependent behavior (validated finding, 2026-06-18)
-
-The wildcard's viability is **Junos-version-dependent** on this platform:
-
-- **Junos 24.4R2.21** — the hub wildcard did **not** work: no usable per-spoke ARI route
-  appeared. This was the original "ARI blocker" that drove the switch to the `/16` supernet.
-- **Junos 23.2R2.21** (current golden image) — the wildcard narrows correctly and ARI
-  installs clean `/24` routes. Validated end-to-end on the pilot pair (srx01 + srx02):
-  IPsec SA up, hub installed `192.168.2.0/24 *[ARI-TS/5] via st0.0` (a clean `/24`, *not* a
-  `0.0.0.0/0` route), data-plane ping `192.168.2.1` sourced from `192.168.1.1` 5/5 with
-  zero loss, and `srxpfe` stayed stable with zero core dumps through the renegotiation.
-  The change was reverted to the `/16` supernet baseline after the test.
-
-**Takeaway:** on 23.2R2.21 the wildcard is a legitimate option for non-summarizable
-addressing. We keep the `/16` supernet as the lab default for its guardrail, but the
-wildcard is no longer "invalid" — it was a version-specific limitation, now characterized.
 
 ---
 
@@ -460,3 +450,25 @@ leaving on `st0.0` (zone `VPN → VPN`), **with no NAT translation** applied.
 | `14-srx04-spoke-backhaul-config.md` | srx04 | Spoke — full-tunnel TS, default route via `st0.0` |
 | `05-csr1-config.md` | CSR1 | WAN transit router / simulated internet |
 | `secrets.env.example` | — | Template for the local `secrets.env` holding `AUTOVPN_PSK` |
+
+---
+
+## 12. References
+
+- Juniper Networks — *IPsec VPN User Guide (Junos OS)*
+  https://www.juniper.net/documentation/us/en/software/junos/vpn-ipsec/index.html
+
+- Juniper Networks — *AutoVPN on Hub-And-Spoke Devices*
+  https://www.juniper.net/documentation/us/en/software/junos/vpn-ipsec/topics/topic-map/security-autovpn-on-hub-and-spoke-devices.html
+
+- Juniper Networks — *Understanding Traffic Selectors in Route-Based VPNs*
+  https://www.juniper.net/documentation/us/en/software/junos/vpn-ipsec/topics/topic-map/security-traffic-selectors-in-route-based-vpns.html
+
+- Juniper Networks — *Example: Configuring AutoVPN with Pre-Shared Key*
+  https://www.juniper.net/documentation/us/en/software/junos/interfaces-next-gen-services/topics/example/configuring-auto-vpn-pre-shared-key.html
+
+- Juniper Networks — *IPsec VPN Configuration Overview*
+  https://www.juniper.net/documentation/us/en/software/junos/vpn-ipsec/topics/topic-map/security-ipsec-vpn-configuration-overview.html
+
+- Cisco — *IOS-XE Configuration Guide*
+  https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/sec_conn_vpnips/configuration/xe-16/sec-sec-for-vpns-w-ipsec-xe-16-book.html
