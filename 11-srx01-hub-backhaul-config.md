@@ -1,10 +1,10 @@
 # srx01 — AutoVPN Hub Configuration (Full-Tunnel Backhaul)
-## Junos OS 23.2R2.21 | VM ID 201 (srx01-test) | Role: AutoVPN Hub + Internet Egress
+## Junos OS 23.2R2.21 | Role: AutoVPN Hub + Internet Egress
 
-> **Scenario:** Full-tunnel backhaul (`feat/spoke-backhaul-fulltunnel`). See
-> `10-backhaul-design-overview.md`. This is the baseline hub config (`01-srx01-hub-config.md`)
-> with full-tunnel traffic selectors, an internet default route, source NAT, and two added
-> security policies. Lines that differ from the baseline are flagged with `# [BACKHAUL]`.
+> Complete hub configuration for the full-tunnel backhaul scenario. The hub
+> terminates all spokes on a single `st0.0`, source-NATs their internet-bound
+> traffic out its WAN, and hairpins spoke-to-spoke traffic. For the design
+> rationale see [`10-backhaul-design-overview.md`](10-backhaul-design-overview.md).
 
 ---
 
@@ -29,13 +29,13 @@ srx01 is the AutoVPN hub **and** the single internet egress point for all spokes
 default-route everything into the tunnel; the hub source-NATs internet-bound traffic out
 `ge-0/0/0` toward CSR1 and hairpins spoke-to-spoke traffic back out `st0.0` (un-NAT'd).
 
-Key differences from the split-tunnel baseline:
+What makes this the full-tunnel hub:
 - Traffic selector `local-ip` is `0.0.0.0/0` (hub accepts any destination from spokes).
   IKEv2 still narrows per-spoke and ARI still installs clean `/24` routes — the hub
   `local-ip 0.0.0.0/0` does **not** create a default route via `st0.0`.
 - A default route `0.0.0.0/0 → 10.0.0.1` sends de-encapsulated internet traffic to CSR1.
 - Source NAT rule-set `VPN-BACKHAUL` (zone VPN → untrust) PATs spoke sources to the WAN IP.
-- New security policies `VPN → untrust` (internet egress) and `VPN → VPN` (spoke-to-spoke).
+- Security policies `VPN → untrust` (internet egress) and `VPN → VPN` (spoke-to-spoke).
 
 ---
 
@@ -53,7 +53,6 @@ Key differences from the split-tunnel baseline:
 # srx01 — AutoVPN Hub (FULL-TUNNEL BACKHAUL)
 # Junos OS 23.2R2.21
 # Traffic Selectors + ARI + source NAT — hub is the internet egress
-# Branch: feat/spoke-backhaul-fulltunnel
 # ============================================================
 
 # --- System ---
@@ -115,10 +114,10 @@ set security ipsec vpn AUTOVPN-HUB bind-interface st0.0
 set security ipsec vpn AUTOVPN-HUB ike gateway AUTOVPN-HUB-GW
 set security ipsec vpn AUTOVPN-HUB ike ipsec-policy AUTOVPN-IPSEC-POL
 
-# [BACKHAUL] Full-tunnel traffic selector: hub local-ip is 0.0.0.0/0 so it accepts ANY
+# Full-tunnel traffic selector: hub local-ip is 0.0.0.0/0 so it accepts ANY
 # destination from spokes (internet + other spoke LANs). remote-ip stays the spoke summary.
 # IKEv2 narrows per-spoke; ARI still installs each specific /24 via st0.0 (local 0.0.0.0/0
-# does NOT create a default route via st0.0). See 10-backhaul-design-overview.md §2.
+# does NOT create a default route via st0.0). See 10-backhaul-design-overview.md §4.
 set security ipsec vpn AUTOVPN-HUB traffic-selector TS-ALL local-ip 0.0.0.0/0
 set security ipsec vpn AUTOVPN-HUB traffic-selector TS-ALL remote-ip 192.168.0.0/16
 
@@ -164,13 +163,13 @@ set security policies from-zone VPN to-zone trust policy vpn-to-trust match dest
 set security policies from-zone VPN to-zone trust policy vpn-to-trust match application any
 set security policies from-zone VPN to-zone trust policy vpn-to-trust then permit
 
-# [BACKHAUL] VPN → untrust: backhauled spoke traffic out to the internet (gets source-NAT'd)
+# VPN → untrust: backhauled spoke traffic out to the internet (gets source-NAT'd)
 set security policies from-zone VPN to-zone untrust policy vpn-to-internet match source-address any
 set security policies from-zone VPN to-zone untrust policy vpn-to-internet match destination-address any
 set security policies from-zone VPN to-zone untrust policy vpn-to-internet match application any
 set security policies from-zone VPN to-zone untrust policy vpn-to-internet then permit
 
-# [BACKHAUL] VPN → VPN: spoke-to-spoke hairpin through the hub (un-NAT'd, private-to-private)
+# VPN → VPN: spoke-to-spoke hairpin through the hub (un-NAT'd, private-to-private)
 set security policies from-zone VPN to-zone VPN policy spoke-to-spoke match source-address any
 set security policies from-zone VPN to-zone VPN policy spoke-to-spoke match destination-address any
 set security policies from-zone VPN to-zone VPN policy spoke-to-spoke match application any
@@ -180,7 +179,7 @@ set security policies from-zone VPN to-zone VPN policy spoke-to-spoke then permi
 # Source NAT — internet egress for backhauled spoke traffic
 # ============================================================
 
-# [BACKHAUL] PAT spoke private sources to the WAN egress interface IP (10.0.0.2).
+# PAT spoke private sources to the WAN egress interface IP (10.0.0.2).
 # Scoped zone VPN -> untrust, so ONLY internet egress is translated. Spoke-to-spoke
 # (VPN -> VPN) and spoke-to-hub-LAN (VPN -> trust) never match and stay un-NAT'd.
 set security nat source rule-set VPN-BACKHAUL from zone VPN
@@ -200,15 +199,15 @@ set routing-options static route 10.0.1.0/30 next-hop 10.0.0.1
 set routing-options static route 10.0.2.0/30 next-hop 10.0.0.1
 set routing-options static route 10.0.3.0/30 next-hop 10.0.0.1
 
-# [BACKHAUL] Default route to the internet via CSR1 — egress path for de-encapsulated
+# Default route to the internet via CSR1 — egress path for de-encapsulated
 # spoke traffic. Spoke LAN /24s remain more-specific (ARI via st0.0), so this only catches
 # true internet-bound traffic.
-# GOLDEN-IMAGE CAVEAT: this 23.2R2.21 image ships a management default `0.0.0.0/0 ->
-# 172.27.1.1 via fxp0` in inet.0. This line would ECMP with it (traffic leaking out fxp0,
-# NAT not applying). Move fxp0 to a management routing-instance in production, OR for lab
-# validation use a specific destination route instead, e.g.:
+# CAVEAT: many vSRX images ship a management default `0.0.0.0/0 -> 172.27.1.1 via fxp0`
+# in inet.0. This line would ECMP with it (traffic leaking out fxp0, NAT not applying).
+# Move fxp0 to a management routing-instance in production, OR for lab validation use a
+# specific destination route instead, e.g.:
 #   set routing-options static route 10.100.100.1/32 next-hop 10.0.0.1   (sim-internet)
-# See 10-backhaul-design-overview.md §3. The pilot pair was validated with the /32 form.
+# See 10-backhaul-design-overview.md §5. Validated with the /32 form.
 set routing-options static route 0.0.0.0/0 next-hop 10.0.0.1
 
 # ============================================================

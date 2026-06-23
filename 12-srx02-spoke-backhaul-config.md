@@ -1,10 +1,10 @@
 # srx02 — AutoVPN Spoke Configuration (Full-Tunnel Backhaul)
-## Junos OS 23.2R2.21 | VM ID 202 (srx02-test) | Role: AutoVPN Spoke
+## Junos OS 23.2R2.21 | Role: AutoVPN Spoke
 
-> **Scenario:** Full-tunnel backhaul (`feat/spoke-backhaul-fulltunnel`). See
-> `10-backhaul-design-overview.md`. This is the baseline spoke config
-> (`02-srx02-spoke-config.md`) with a full-tunnel traffic selector and a default route into
-> the tunnel. Lines that differ from the baseline are flagged with `# [BACKHAUL]`.
+> Complete spoke configuration for the full-tunnel backhaul scenario. This spoke
+> sends all non-local traffic up the tunnel to the hub via a default route on
+> `st0.0`. For the design rationale see
+> [`10-backhaul-design-overview.md`](10-backhaul-design-overview.md).
 
 ---
 
@@ -30,11 +30,11 @@ LAN (`192.168.2.0/24`) is sent up the tunnel to the hub via a default route on `
 hub source-NATs internet-bound traffic and hairpins spoke-to-spoke traffic. No local
 internet breakout.
 
-Differences from the split-tunnel baseline:
+What makes this a full-tunnel spoke:
 - Traffic-selector `remote-ip` is `0.0.0.0/0` (request everything through the tunnel).
-- Default route `0.0.0.0/0 → st0.0` replaces the specific `192.168.1.0/24 → st0.0` route.
-- The host route to the hub WAN IP (`10.0.0.2/32 → 10.0.1.1`) is **retained and is now
-  critical** — it keeps the tunnel-carrying ESP packets out of the tunnel (anti-recursion).
+- Default route `0.0.0.0/0 → st0.0` sends all non-local traffic to the hub.
+- The host route to the hub WAN IP (`10.0.0.2/32 → 10.0.1.1`) is **critical** — it keeps
+  the tunnel-carrying ESP packets out of the tunnel (anti-recursion).
 
 Spoke-to-spoke needs no extra config here: traffic to another spoke's LAN simply follows
 the default route to the hub, which routes it back out to the destination spoke.
@@ -55,7 +55,6 @@ the default route to the hub, which routes it back out to the destination spoke.
 # srx02 — AutoVPN Spoke (FULL-TUNNEL BACKHAUL)
 # Junos OS 23.2R2.21
 # Traffic Selectors — full tunnel, all non-local traffic to hub
-# Branch: feat/spoke-backhaul-fulltunnel
 # ============================================================
 
 # --- System ---
@@ -116,7 +115,7 @@ set security ipsec vpn AUTOVPN-SPOKE ike gateway AUTOVPN-SPOKE-GW
 set security ipsec vpn AUTOVPN-SPOKE ike ipsec-policy AUTOVPN-IPSEC-POL
 set security ipsec vpn AUTOVPN-SPOKE establish-tunnels immediately
 
-# [BACKHAUL] Full-tunnel traffic selector: local-ip = this spoke LAN, remote-ip = 0.0.0.0/0
+# Full-tunnel traffic selector: local-ip = this spoke LAN, remote-ip = 0.0.0.0/0
 # (request ALL destinations — internet and other spoke LANs — through the tunnel).
 set security ipsec vpn AUTOVPN-SPOKE traffic-selector TS-SPOKE local-ip 192.168.2.0/24
 set security ipsec vpn AUTOVPN-SPOKE traffic-selector TS-SPOKE remote-ip 0.0.0.0/0
@@ -168,7 +167,7 @@ set security policies from-zone VPN to-zone trust policy vpn-to-trust then permi
 # Routing
 # ============================================================
 
-# [BACKHAUL] Anti-recursion: route to hub WAN IP via CSR1 MUST stay more-specific than the
+# Anti-recursion: route to hub WAN IP via CSR1 MUST stay more-specific than the
 # default below, or the tunnel-carrying ESP packets would recurse into the tunnel.
 set routing-options static route 10.0.0.2/32 next-hop 10.0.1.1
 
@@ -178,14 +177,13 @@ set routing-options static route 10.0.1.0/30 next-hop 10.0.1.1
 set routing-options static route 10.0.2.0/30 next-hop 10.0.1.1
 set routing-options static route 10.0.3.0/30 next-hop 10.0.1.1
 
-# [BACKHAUL] Default route into the tunnel — everything non-local goes to the hub.
-# Replaces the baseline's specific 192.168.1.0/24 -> st0.0 (now covered by this default).
-# GOLDEN-IMAGE CAVEAT: this 23.2R2.21 image ships a management default `0.0.0.0/0 ->
-# 172.27.1.1 via fxp0` in inet.0. This line would ECMP with it (traffic leaking out fxp0
-# instead of the tunnel). Move fxp0 to a management routing-instance in production, OR for
-# lab validation use a specific destination route instead, e.g.:
+# Default route into the tunnel — sends all non-local traffic to the hub via st0.0.
+# CAVEAT: many vSRX images ship a management default `0.0.0.0/0 -> 172.27.1.1 via fxp0`
+# in inet.0. This line would ECMP with it (traffic leaking out fxp0 instead of the
+# tunnel). Move fxp0 to a management routing-instance in production, OR for lab
+# validation use a specific destination route instead, e.g.:
 #   set routing-options static route 10.100.100.1/32 next-hop st0.0   (sim-internet)
-# See 10-backhaul-design-overview.md §3. The pilot pair was validated with the /32 form.
+# See 10-backhaul-design-overview.md §5. Validated with the /32 form.
 set routing-options static route 0.0.0.0/0 next-hop st0.0
 
 # ============================================================
