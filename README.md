@@ -69,6 +69,7 @@ filtered, and logged at a single point (UTM/IDP on the hub).
 | `14-srx04-spoke-backhaul-config.md` | Spoke config |
 | `05-csr1-config.md` | CSR1 WAN transit router (Cisco IOS-XE) |
 | `secrets.env.example` | Template for the local `secrets.env` holding the PSK |
+| `network-diagram.html` | Interactive diagram — lab topology + the backhaul traffic flow |
 | `CLAUDE.md` | Deployment instructions / context for Claude Code |
 
 ---
