@@ -453,7 +453,71 @@ leaving on `st0.0` (zone `VPN → VPN`), **with no NAT translation** applied.
 
 ---
 
-## 12. References
+## 12. Common Commands and Troubleshooting
+
+General-purpose Junos commands for operating and troubleshooting route-based IPsec
+VPNs on SRX. These are not specific to this lab — they apply to any SRX IKE/IPsec
+deployment. See the Juniper references in §13 for full command documentation.
+
+### Tunnel status
+
+All are operational-mode `show` commands, safe to run at any time:
+
+| Command | What it shows |
+|---------|---------------|
+| `show security ike security-associations` | Phase 1 (IKE) SA state, peers, and IKE version |
+| `show security ike security-associations detail` | Per-SA crypto, lifetimes, role, and identity detail |
+| `show security ipsec security-associations` | Phase 2 (IPsec) SA state and the bound tunnel interface |
+| `show security ipsec security-associations detail` | Proxy-IDs, protocol, lifetimes, and the SPIs per SA |
+| `show security ipsec statistics` | Per-tunnel ESP encap/decap counters and error counts |
+| `show security ipsec inactive-tunnels` | Tunnels that are configured but not currently established |
+
+### Routing, policy, and NAT
+
+| Command | What it shows |
+|---------|---------------|
+| `show route <prefix>` | Which next-hop / tunnel interface a destination resolves to |
+| `show security flow session` | Live sessions, the in/out interfaces, and any NAT translation |
+| `show security policies` / `show security match-policies` | Configured policy and which policy a given flow matches |
+| `show security nat source rule all` | Source-NAT rule hit counts and translation detail |
+| `show security zones` | Interface-to-zone bindings (including `st0` units) |
+
+### Debugging IKE/IPsec negotiation
+
+When an SA won't establish, enable IKE tracing and read the log:
+
+```
+set security ike traceoptions file ike-trace
+set security ike traceoptions flag ike
+set security ike traceoptions level detail
+commit
+```
+
+```
+show log ike-trace            # traceoptions output
+clear security ike security-associations       # force Phase 1 to renegotiate
+clear security ipsec security-associations     # force Phase 2 to renegotiate
+```
+
+> **IKE log daemon varies by platform/release.** On SRX platforms running the
+> `iked` process (the modern IKE daemon, including recent vSRX releases) the live
+> daemon log is `show log iked`; older releases use the `kmd` process and
+> `show log kmd`. Configured `traceoptions` write to whatever filename you set
+> regardless of daemon.
+
+### General troubleshooting flow
+
+| Stage | Symptom | Common causes |
+|-------|---------|---------------|
+| Underlay | Peers can't reach each other | Routing/firewall on the transport; verify with `ping` between WAN IPs |
+| Phase 1 (IKE) | No IKE SA, or stuck negotiating | Pre-shared-key mismatch, IKE proposal/DH-group mismatch, wrong peer address or IKE identity, IKEv1-vs-IKEv2 mismatch |
+| Phase 2 (IPsec) | IKE SA up but no IPsec SA | IPsec proposal/PFS mismatch, proxy-ID or traffic-selector mismatch between peers |
+| Data plane | Tunnel up but traffic doesn't pass | Missing/incorrect route into the `st0` interface, security policy not permitting the flow, or `st0` in the wrong zone |
+| Fragmentation | Large flows fail, small ones work | Tunnel MTU/MSS — clamp TCP MSS (`security flow tcp-mss ipsec-vpn`) to allow for ESP overhead |
+
+---
+
+## 13. References
 
 - Juniper Networks — *IPsec VPN User Guide (Junos OS)*
   https://www.juniper.net/documentation/us/en/software/junos/vpn-ipsec/index.html
